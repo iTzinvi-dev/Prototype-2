@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>∞</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;background:#000;overflow:hidden}
+canvas{display:block}
+#boot{
+  position:fixed;inset:0;z-index:30;background:#000;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:40px;
+  transition:opacity 2s cubic-bezier(.77,0,.18,1);
+}
+#boot.fade{opacity:0;pointer-events:none}
+#title-word{font:100 24px/1 'Helvetica Neue',sans-serif;letter-spacing:.6em;
+  text-transform:uppercase;color:rgba(255,255,255,.1)}
+#btn{
+  font:200 10px/1 'Helvetica Neue',sans-serif;letter-spacing:.55em;text-transform:uppercase;
+  color:rgba(255,255,255,.4);border:1px solid rgba(255,255,255,.1);
+  background:none;padding:18px 52px;cursor:pointer;transition:color .5s,border-color .5s;
+}
+#btn:hover{color:rgba(255,255,255,.85);border-color:rgba(255,255,255,.3)}
+/* gesture bar */
+#bar{
+  position:fixed;bottom:0;left:0;right:0;z-index:10;
+  display:flex;justify-content:center;
+  border-top:1px solid rgba(255,255,255,.05);
+  opacity:0;transition:opacity 1.2s ease;pointer-events:none;
+}
+#bar.show{opacity:1}
+.gc{
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:16px 20px;border-right:1px solid rgba(255,255,255,.04);
+  flex:1;max-width:120px;transition:background .3s ease;
+}
+.gc:last-child{border-right:none}
+.gc .em{font-size:18px;line-height:1;filter:grayscale(1) brightness(.5);transition:filter .3s}
+.gc .gn{font:200 7px/1 'Helvetica Neue',sans-serif;letter-spacing:.22em;
+  text-transform:uppercase;color:rgba(255,255,255,.18);transition:color .3s}
+.gc .sn{font:300 7px/1 'Helvetica Neue',sans-serif;letter-spacing:.18em;
+  text-transform:uppercase;color:rgba(255,255,255,.1);transition:color .3s}
+.gc.active{background:rgba(255,255,255,.025)}
+.gc.active .em{filter:grayscale(0) brightness(1)}
+.gc.active .gn{color:rgba(255,255,255,.65)}
+.gc.active .sn{color:rgba(255,255,255,.35)}
+/* shape name flash */
+#flash{
+  position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  font:100 clamp(1.8rem,6vw,5rem)/1 'Helvetica Neue',sans-serif;
+  letter-spacing:.45em;text-transform:uppercase;
+  color:rgba(255,255,255,0);pointer-events:none;z-index:10;
+  white-space:nowrap;transition:color .35s ease;
+}
+/* progress ring */
+#pring{
+  position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:72px;height:72px;z-index:11;pointer-events:none;
+  opacity:0;transition:opacity .25s ease;
+}
+#pring.show{opacity:1}
+#pc{fill:none;stroke:rgba(255,255,255,.35);stroke-width:1;
+  stroke-dasharray:201;stroke-dashoffset:201;
+  transform-origin:36px 36px;transform:rotate(-90deg);
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<video id="v" style="display:none" playsinline autoplay muted></video>
+
+<div id="boot">
+  <div id="title-word">Universe</div>
+  <button id="btn">Begin</button>
+</div>
+
+<div id="flash"></div>
+
+<svg id="pring" viewBox="0 0 72 72">
+  <circle id="pc" cx="36" cy="36" r="32"/>
+</svg>
+
+<div id="bar">
+  <div class="gc" data-g="fist"> <div class="em">✊</div><div class="gn">Fist</div>   <div class="sn">Galaxy</div>  </div>
+  <div class="gc" data-g="open"> <div class="em">🖐</div><div class="gn">Open</div>   <div class="sn">Universe</div></div>
+  <div class="gc" data-g="peace"><div class="em">✌️</div><div class="gn">Peace</div>  <div class="sn">Liquid</div>  </div>
+  <div class="gc" data-g="point"><div class="em">☝️</div><div class="gn">Index</div>  <div class="sn">Grid</div>    </div>
+  <div class="gc" data-g="thumb"><div class="em">👍</div><div class="gn">Thumb</div>  <div class="sn">DNA</div>     </div>
+  <div class="gc" data-g="three"><div class="em">🤟</div><div class="gn">3 Fingers</div><div class="sn">Sphere</div></div>
+  <div class="gc" data-g="pinky"><div class="em">🤙</div><div class="gn">Shaka</div>  <div class="sn">Tornado</div></div>
+</div>
+
+<script>
+/* ── RENDERER ── */
+const renderer = new THREE.WebGLRenderer({
+  canvas:document.getElementById('c'),
+  antialias:false, powerPreference:'high-performance'
+});
+renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
+renderer.setSize(innerWidth,innerHeight);
+renderer.setClearColor(0x000000,1);
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50,innerWidth/innerHeight,0.1,2000);
+camera.position.set(0,60,170);
+camera.lookAt(0,0,0);
+
+/* ── SHADER ── */
+const vert = `
+  uniform float uTime;
+  uniform float uDPR;
+  uniform float uMorph;
+  uniform vec3  uHandPos;
+  uniform float uHandForce;
+  uniform float uHandOpen;
+  uniform float uGrab;
+  attribute vec3  aBase;
+  attribute vec3  aNext;
+  attribute float aSeed;
+  attribute float aSz;
+  attribute vec3  aCol;
+  attribute vec3  aColN;
+  varying vec3  vCol;
+  varying float vA;
+  void main(){
+    float e = uMorph*uMorph*(3.0-2.0*uMorph);
+    vec3 p = mix(aBase, aNext, e);
+    // organic breath
+    p += normalize(p+vec3(.001)) * sin(uTime*.85+aSeed*6.28)*.22;
+    // hand
+    if(uHandForce>0.0){
+      vec3 d=p-uHandPos; float dist=length(d); float R=40.0;
+      if(dist<R && dist>0.001){
+        float f=pow(1.0-dist/R,2.0)*uHandForce;
+        if(uHandOpen>.5)       p+=normalize(d)*f*22.0;
+        else if(uGrab>.5)      p-=normalize(d)*f*17.0;
+        else { vec3 t=normalize(cross(d,vec3(0,1,0))); p+=t*f*11.0; }
+      }
+    }
+    float tw=0.72+0.28*sin(uTime*2.5+aSeed*11.3);
+    vec4 mv=modelViewMatrix*vec4(p,1.0);
+    gl_PointSize=aSz*tw*uDPR*(280.0/-mv.z);
+    gl_Position=projectionMatrix*mv;
+    vCol=mix(aCol,aColN,e); vA=0.55+0.45*tw;
+  }
+`;
+const frag = `
+  varying vec3 vCol; varying float vA;
+  void main(){
+    vec2 uv=gl_PointCoord-.5; float d=length(uv);
+    if(d>.5) discard;
+    float core=1.0-smoothstep(0.0,.18,d);
+    float glow=1.0-smoothstep(0.0,.50,d);
+    float a=core*.9+glow*.5;
+    gl_FragColor=vec4(vCol+core*.45, a*vA);
+  }
+`;
+
+const uni = {
+  uTime:      {value:0},
+  uDPR:       {value:renderer.getPixelRatio()},
+  uMorph:     {value:1},
+  uHandPos:   {value:new THREE.Vector3()},
+  uHandForce: {value:0},
+  uHandOpen:  {value:0},
+  uGrab:      {value:0},
+};
+
+const mat = new THREE.ShaderMaterial({
+  uniforms:uni, vertexShader:vert, fragmentShader:frag,
+  transparent:true, depthWrite:false, blending:THREE.AdditiveBlending,
+});
+
+/* ── GEOMETRY ── */
+const N = 15000;
+const geo = new THREE.BufferGeometry();
+const _b=new Float32Array(N*3), _n=new Float32Array(N*3);
+const _s=new Float32Array(N),   _z=new Float32Array(N);
+const _c=new Float32Array(N*3), _cn=new Float32Array(N*3);
+const _d=new Float32Array(N*3);
+
+for(let i=0;i<N;i++){
+  _s[i]=Math.random()*100;
+  _z[i]=0.3+Math.random()*Math.random()*1.9;
+}
+geo.setAttribute('position',new THREE.BufferAttribute(_d,3));
+geo.setAttribute('aBase',   new THREE.BufferAttribute(_b,3));
+geo.setAttribute('aNext',   new THREE.BufferAttribute(_n,3));
+geo.setAttribute('aSeed',   new THREE.BufferAttribute(_s,1));
+geo.setAttribute('aSz',     new THREE.BufferAttribute(_z,1));
+geo.setAttribute('aCol',    new THREE.BufferAttribute(_c,3));
+geo.setAttribute('aColN',   new THREE.BufferAttribute(_cn,3));
+scene.add(new THREE.Points(geo,mat));
+
+/* ── PALETTES ── */
+const PAL = {
+  galaxy:  ['#ffd580','#7fc8ff','#ffffff','#ffb3d9'],
+  univ:    ['#aad4ff','#ffffff','#ffd580','#c8a0ff'],
+  liquid:  ['#00f5d4','#00bbf9','#fee440','#9b5de5'],
+  grid:    ['#ff6b6b','#ffd93d','#6bcb77','#4d96ff'],
+  dna:     ['#f72585','#7209b7','#3a86ff','#4cc9f0'],
+  sphere:  ['#e0c3fc','#8ec5fc','#ffffff','#fbc2eb'],
+  tornado: ['#f8961e','#f3722c','#f94144','#90be6d'],
+};
+function applyCol(k,t,buf,i3){
+  const p=PAL[k], n=p.length;
+  const fi=t*n, lo=Math.floor(fi)%n, hi=(lo+1)%n, fr=fi-Math.floor(fi);
+  const c=new THREE.Color(p[lo]).lerp(new THREE.Color(p[hi]),fr);
+  buf[i3]=c.r;buf[i3+1]=c.g;buf[i3+2]=c.b;
+}
+
+/* ── SHAPE BUILDERS ── */
+function bGalaxy(pos,col){
+  for(let i=0;i<N;i++){
+    const i3=i*3,t=i/N,arm=i%3;
+    const r=10+Math.pow(Math.random(),.7)*58;
+    const th=(arm/3)*Math.PI*2+(r/58)*2.2+(Math.random()-.5)*.8;
+    pos[i3]=r*Math.cos(th);pos[i3+1]=(Math.random()-.5)*Math.pow(Math.random(),2)*14;pos[i3+2]=r*Math.sin(th);
+    applyCol('galaxy',t,col,i3);
+  }
+}
+function bUniverse(pos,col){
+  for(let i=0;i<N;i++){
+    const i3=i*3,t=i/N;
+    const r=38+Math.pow(Math.random(),.45)*90,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);
+    pos[i3]=r*Math.sin(ph)*Math.cos(th);pos[i3+1]=r*Math.cos(ph)*.65;pos[i3+2]=r*Math.sin(ph)*Math.sin(th);
+    applyCol('univ',t,col,i3);
+  }
+}
+function bLiquid(pos,col){
+  for(let i=0;i<N;i++){
+    const i3=i*3,t=i/N;
+    const th=Math.random()*Math.PI*2,ph=Math.random()*Math.PI;
+    const r=50+Math.sin(ph*4+th*3)*9+Math.sin(ph*7)*6;
+    pos[i3]=r*Math.sin(ph)*Math.cos(th);pos[i3+1]=r*Math.cos(ph)*.75;pos[i3+2]=r*Math.sin(ph)*Math.sin(th);
+    applyCol('liquid',t,col,i3);
+  }
+}
+function bGrid(pos,col){
+  const s=Math.ceil(Math.cbrt(N));
+  for(let i=0;i<N;i++){
+    const i3=i*3,t=i/N;
+    const ix=i%s,iy=Math.floor(i/s)%s,iz=Math.floor(i/(s*s))%s,sp=85/(s-1);
+    pos[i3]=(ix-s/2)*sp;pos[i3+1]=(iy-s/2)*sp*.55;pos[i3+2]=(iz-s/2)*sp*.38;
+    applyCol('grid',t,col,i3);
+  }
+}
+function bDNA(pos,col){
+  for(let i=0;i<N;i++){
+    const i3=i*3,t=i/N,st=i%2,pg=t*Math.PI*16,r=26;
+    pos[i3]=r*Math.cos(pg+st*Math.PI);pos[i3+1]=(t-.5)*115;pos[i3+2]=r*Math.sin(pg+st*Math.PI);
+    applyCol('dna',t,col,i3);
+  }
+}
+function bSphere(pos,col){
+  for(let i=0;i<N;i++){
+    const i3=i*3,t=i/N,r=64,th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);
+    pos[i3]=r*Math.sin(ph)*Math.cos(th);pos[i3+1]=r*Math.cos(ph);pos[i3+2]=r*Math.sin(ph)*Math.sin(th);
+    applyCol('sphere',t,col,i3);
+  }
+}
+function bTornado(pos,col){
+  for(let i=0;i<N;i++){
+    const i3=i*3,t=i/N,r=Math.pow(t,.6)*58+1.5,th=t*Math.PI*30;
+    pos[i3]=r*Math.cos(th);pos[i3+1]=(t-.5)*105;pos[i3+2]=r*Math.sin(th);
+    applyCol('tornado',t,col,i3);
+  }
+}
+
+const SHAPES=[
+  {name:'GALAXY',   build:bGalaxy,   gkey:'fist'},
+  {name:'UNIVERSE', build:bUniverse, gkey:'open'},
+  {name:'LIQUID',   build:bLiquid,   gkey:'peace'},
+  {name:'GRID',     build:bGrid,     gkey:'point'},
+  {name:'DNA',      build:bDNA,      gkey:'thumb'},
+  {name:'SPHERE',   build:bSphere,   gkey:'three'},
+  {name:'TORNADO',  build:bTornado,  gkey:'pinky'},
+];
+
+let curIdx=-1, isMorphing=false, morphT0=0;
+const MDUR=2.2;
+
+function commitAndMorph(idx){
+  if(idx===curIdx || isMorphing) return;
+  isMorphing=true;
+
+  // freeze current blend into base
+  const sm=uni.uMorph.value; const e=sm*sm*(3-2*sm);
+  for(let i=0;i<N*3;i++){
+    _b[i]=_b[i]+(_n[i]-_b[i])*e;
+    _c[i]=_c[i]+(_cn[i]-_c[i])*e;
+  }
+  geo.attributes.aBase.needsUpdate=true;
+  geo.attributes.aCol.needsUpdate=true;
+
+  SHAPES[idx].build(_n,_cn);
+  geo.attributes.aNext.needsUpdate=true;
+  geo.attributes.aColN.needsUpdate=true;
+
+  uni.uMorph.value=0;
+  morphT0=performance.now();
+  curIdx=idx;
+
+  // bar highlight
+  document.querySelectorAll('.gc').forEach(el=>{
+    el.classList.toggle('active',el.dataset.g===SHAPES[idx].gkey);
+  });
+
+  // name flash
+  const fl=document.getElementById('flash');
+  fl.textContent=SHAPES[idx].name;
+  fl.style.color='rgba(255,255,255,.4)';
+  setTimeout(()=>fl.style.color='rgba(255,255,255,0)',1800);
+
+  setTimeout(()=>isMorphing=false, MDUR*1000+300);
+}
+
+// init
+bGalaxy(_b,_c); bGalaxy(_n,_cn);
+geo.attributes.aBase.needsUpdate=true; geo.attributes.aNext.needsUpdate=true;
+geo.attributes.aCol.needsUpdate=true;  geo.attributes.aColN.needsUpdate=true;
+
+/* ── HAND TRACKING ── */
+const vid=document.getElementById('v');
+const RC=new THREE.Raycaster();
+const IP=new THREE.Plane(new THREE.Vector3(0,0,1),0);
+const HW=new THREE.Vector3();
+
+let hVisible=false, hOpen=false, hGrab=false;
+let curGest='', gestFrames=0;
+const HOLD=22; // frames to hold before morph
+let smoothForce=0;
+
+function fingers(lm){
+  const tp=[8,12,16,20],pp=[6,10,14,18];
+  let u=0; for(let j=0;j<4;j++) if(lm[tp[j]].y<lm[pp[j]].y) u++;
+  return u;
+}
+function detectG(lm){
+  const u=fingers(lm);
+  const th=Math.abs(lm[4].x-lm[3].x)>0.065;
+  const i_u=lm[8].y<lm[6].y, m_u=lm[12].y<lm[10].y;
+  const r_u=lm[16].y<lm[14].y, p_u=lm[20].y<lm[18].y;
+  if(u===0&&!th)                            return 'fist';
+  if(u>=4)                                  return 'open';
+  if(i_u&&m_u&&!r_u&&!p_u)                 return 'peace';
+  if(i_u&&!m_u&&!r_u&&!p_u)                return 'point';
+  if(!i_u&&!m_u&&!r_u&&!p_u&&th)           return 'thumb';
+  if(i_u&&m_u&&r_u&&!p_u)                  return 'three';
+  if(th&&p_u&&!i_u&&!m_u&&!r_u)            return 'pinky';
+  return 'none';
+}
+const GMAP={fist:0,open:1,peace:2,point:3,thumb:4,three:5,pinky:6};
+
+const pring=document.getElementById('pring');
+const pc=document.getElementById('pc');
+function setRing(p){pc.style.strokeDashoffset=201*(1-p);}
+
+function onResults(r){
+  if(r.multiHandLandmarks&&r.multiHandLandmarks.length>0){
+    const lm=r.multiHandLandmarks[0];
+    hVisible=true;
+    const palm=lm[9];
+    const sx=1-palm.x, sy=palm.y;
+    RC.setFromCamera({x:sx*2-1,y:-(sy*2-1)},camera);
+    RC.ray.intersectPlane(IP,HW); HW.z=18;
+    uni.uHandPos.value.copy(HW);
+
+    const g=detectG(lm);
+    hOpen=g==='open'; hGrab=g==='fist';
+    uni.uHandOpen.value=hOpen?1:0;
+    uni.uGrab.value=hGrab?1:0;
+
+    // live highlight current detected gesture
+    document.querySelectorAll('.gc').forEach(el=>{
+      el.classList.toggle('active',el.dataset.g===g&&!isMorphing);
+    });
+
+    if(g!=='none'&&g in GMAP){
+      if(g===curGest){
+        gestFrames++;
+        const p=Math.min(gestFrames/HOLD,1);
+        pring.classList.add('show'); setRing(p);
+        if(gestFrames>=HOLD){
+          pring.classList.remove('show');
+          gestFrames=0;
+          commitAndMorph(GMAP[g]);
+        }
+      } else {
+        curGest=g; gestFrames=0; setRing(0); pring.classList.remove('show');
+      }
+    } else {
+      curGest=''; gestFrames=0; setRing(0); pring.classList.remove('show');
+    }
+  } else {
+    hVisible=false;
+    uni.uHandOpen.value=0; uni.uGrab.value=0;
+    curGest=''; gestFrames=0; setRing(0); pring.classList.remove('show');
+    if(!isMorphing) document.querySelectorAll('.gc').forEach(el=>el.classList.remove('active'));
+  }
+}
+
+/* ── BG STARS ── */
+const bgg=new THREE.BufferGeometry();
+const bp=new Float32Array(2000*3);
+for(let i=0;i<2000;i++){
+  const r=220+Math.random()*600,t=Math.random()*Math.PI*2,p=Math.acos(2*Math.random()-1);
+  bp[i*3]=r*Math.sin(p)*Math.cos(t);bp[i*3+1]=r*Math.cos(p);bp[i*3+2]=r*Math.sin(p)*Math.sin(t);
+}
+bgg.setAttribute('position',new THREE.BufferAttribute(bp,3));
+scene.add(new THREE.Points(bgg,new THREE.PointsMaterial({
+  color:0xffffff,size:0.18,transparent:true,opacity:0.18,
+  blending:THREE.AdditiveBlending,depthWrite:false
+})));
+
+/* ── RENDER LOOP ── */
+let running=false, camTheta=0, camY=60, camTY=60;
+
+function loop(ts){
+  requestAnimationFrame(loop);
+  if(!running) return;
+
+  uni.uTime.value=ts*.001;
+
+  // morph update
+  if(uni.uMorph.value<1){
+    uni.uMorph.value=Math.min((performance.now()-morphT0)*.001/MDUR,1.0);
+  }
+
+  // smooth hand force — only active when hand visible
+  smoothForce+=(( hVisible?1:0)-smoothForce)*0.06;
+  uni.uHandForce.value=smoothForce;
+
+  // camera slow orbit
+  camTheta+=0.00015;
+  camTY=hVisible?(20+(HW.y+65)/130*65):55;
+  camY+=(camTY-camY)*.016;
+  camera.position.set(Math.sin(camTheta)*170,camY,Math.cos(camTheta)*170);
+  camera.lookAt(0,0,0);
+
+  renderer.render(scene,camera);
+}
+requestAnimationFrame(loop);
+
+/* ── BOOT ── */
+document.getElementById('btn').addEventListener('click',async()=>{
+  document.getElementById('boot').classList.add('fade');
+  running=true;
+  commitAndMorph(0);
+
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:'user',width:{ideal:480},height:{ideal:360}}
+    });
+    vid.srcObject=stream;
+    const hands=new Hands({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${f}`});
+    hands.setOptions({maxNumHands:1,modelComplexity:0,minDetectionConfidence:0.62,minTrackingConfidence:0.62});
+    hands.onResults(onResults);
+
+    let lastVT=-1;
+    vid.onloadedmetadata=()=>{
+      vid.play();
+      const pump=async()=>{
+        if(vid.currentTime!==lastVT){ lastVT=vid.currentTime; await hands.send({image:vid}); }
+        requestAnimationFrame(pump);
+      };
+      pump();
+      setTimeout(()=>document.getElementById('bar').classList.add('show'),1000);
+    };
+  } catch(e){
+    // no camera — keyboard only
+    document.getElementById('bar').classList.add('show');
+  }
+});
+
+// keyboard fallback (1-7)
+window.addEventListener('keydown',e=>{
+  const n=parseInt(e.key);
+  if(n>=1&&n<=7) commitAndMorph(n-1);
+});
+
+window.addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+  uni.uDPR.value=renderer.getPixelRatio();
+});
+</script>
+</body>
+</html>
